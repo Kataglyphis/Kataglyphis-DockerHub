@@ -93783,7 +93783,7 @@ this.aV()},
 G(a){var s,r=null,q=this.a,p=q.d
 q=q.c
 s=t.p
-return new A.kX(A.b([A.eU(A.cz(A.b([A.dI(r,new A.Gj("ws://127.0.0.1:8443",r,r),B.w,r,B.IU,new A.cV(r,r,A.aHt(B.mj,2),A.kf(8),r,r,B.av),r,r,r,r),B.a7A,B.ad1],s),B.E,B.aB,B.A,10),r,r)],s),p,q.r,q.w,q,r)}}
+return new A.kX(A.b([A.eU(A.cz(A.b([A.dI(r,new A.Gj("wss://himbeere2/webrtc-ws",r,r),B.w,r,B.IU,new A.cV(r,r,A.aHt(B.mj,2),A.kf(8),r,r,B.av),r,r,r,r),B.a7A,B.ad1],s),B.E,B.aB,B.A,10),r,r)],s),p,q.r,q.w,q,r)}}
 A.asU.prototype={
 $1(a){return A.ji().$1("stop on dispose failed: "+A.n(a))},
 $S:40}

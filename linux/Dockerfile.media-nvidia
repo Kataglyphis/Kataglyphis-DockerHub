@@ -1,6 +1,22 @@
 # syntax=docker/dockerfile:1.19
 
-ARG BASE_IMAGE=local/kataglyphis:toolchain
+# ==============================================================================
+# Dockerfile.media-nvidia  —  Media stack with NVIDIA GPU acceleration
+#
+# Position in the chain:
+#   :toolchain-nvidia  →  THIS (:media-nvidia)  →  :android-nvidia  →  :nvidia
+#
+# Differences from the standard Dockerfile.media:
+#   1. Default BASE_IMAGE is local/kataglyphis:toolchain-nvidia
+#   2. NVIDIA_CODEC_HEADERS=yes  → GStreamer nvcodec plugin always built
+#   3. ORT is built TWICE:
+#      a) CPU build  (same as standard, for fallback / WASM / JS)
+#      b) GPU build  (30-build-native-nvidia.sh — CUDA+TensorRT+cuDNN EPs)
+#
+# The standard build (Dockerfile.media) is UNCHANGED.
+# ==============================================================================
+
+ARG BASE_IMAGE=local/kataglyphis:toolchain-nvidia
 FROM ${BASE_IMAGE}
 
 ARG BUILD_TYPE=Release
@@ -10,31 +26,31 @@ ARG GSTREAMER_VERSION=1.28.1
 SHELL ["bash", "-lc"]
 
 # ------------------------------------------------------------------------------
-# [NEW] RISC-V Specific Toolchain Setup
+# RISC-V specific toolchain setup (same as standard media)
 # ------------------------------------------------------------------------------
-# Since ENV cannot be conditional, we write to a profile script.
-# Because SHELL is set to "bash -lc", this script will be sourced 
-# at the start of every subsequent RUN instruction.
 RUN if [ "$TARGETARCH" = "riscv64" ]; then \
         echo 'export LIBRARY_PATH=/opt/gcc-15.2.0/lib64:/opt/gcc-15.2.0/lib:$LIBRARY_PATH' >> /etc/profile.d/10-riscv-gcc.sh && \
         echo 'export LD_LIBRARY_PATH=/opt/gcc-15.2.0/lib64:/opt/gcc-15.2.0/lib:$LD_LIBRARY_PATH' >> /etc/profile.d/10-riscv-gcc.sh; \
     fi
 
 # ------------------------------------------------------------------------------
-# GStreamer build: env + setup
+# Force NVIDIA codec headers on — GStreamer nvcodec plugin will always be built
+# ------------------------------------------------------------------------------
+ENV NVIDIA_CODEC_HEADERS=yes
+
+# ------------------------------------------------------------------------------
+# GStreamer build: env + setup  (identical to Dockerfile.media)
 # ------------------------------------------------------------------------------
 ENV GSTREAMER_VERSION=${GSTREAMER_VERSION} \
     GSTREAMER_PREFIX=/opt/gstreamer \
     GST_PLUGIN_PATH="" \
     GI_TYPELIB_PATH=""
 
-# Multiarch libdir symlink
 RUN set -eux; \
     triplet="$(dpkg-architecture -q DEB_HOST_MULTIARCH)"; \
     mkdir -p "/opt/gstreamer/lib/${triplet}"; \
     ln -snf "/opt/gstreamer/lib/${triplet}" "/opt/gstreamer/lib/multiarch" || true
 
-# GStreamer env
 ENV PKG_CONFIG_PATH="" \
     LD_LIBRARY_PATH="" \
     CMAKE_PREFIX_PATH=""
@@ -45,8 +61,12 @@ ENV LD_LIBRARY_PATH="/usr/local/lib:${GSTREAMER_PREFIX}/lib/multiarch:${LD_LIBRA
 ENV GST_PLUGIN_PATH="${GSTREAMER_PREFIX}/lib/multiarch/gstreamer-1.0:${GST_PLUGIN_PATH}"
 ENV GI_TYPELIB_PATH="${GSTREAMER_PREFIX}/lib/multiarch/girepository-1.0:${GI_TYPELIB_PATH}"
 
+# CUDA env must remain visible (already set in Dockerfile.nvidia via ENV)
+# Extend LD_LIBRARY_PATH for CUDA/TensorRT libs so GStreamer nvcodec plugin finds them
+ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${TENSORRT_HOME}/lib:${LD_LIBRARY_PATH}"
+
 # ------------------------------------------------------------------------------
-# Libcamera build: env
+# Libcamera build: env  (identical to Dockerfile.media)
 # ------------------------------------------------------------------------------
 ENV LIBCAMERA_PREFIX=/opt/libcamera
 ENV PATH="${LIBCAMERA_PREFIX}/bin:${PATH}"
@@ -55,31 +75,28 @@ ENV LD_LIBRARY_PATH="${LIBCAMERA_PREFIX}/lib:${LIBCAMERA_PREFIX}/lib64:${LD_LIBR
 ENV GST_PLUGIN_PATH="${LIBCAMERA_PREFIX}/lib/gstreamer-1.0:${GST_PLUGIN_PATH}"
 
 # ==============================================================================
-# Media stack; ONNX Runtime + GStreamer
+# Media stack; ONNX Runtime — CPU build (shared with standard media build)
 # ==============================================================================
-# ONNX Runtime build helper
 COPY linux/scripts/03-media/onnxruntime/build /opt/scripts/media/onnxruntime/build
 RUN chmod +x /opt/scripts/media/onnxruntime/build/*.sh /opt/scripts/media/onnxruntime/build/lib/*.sh || true
 
-# Make gstreamer env helper available early so setup-gstreamer.sh can source it
 COPY linux/scripts/04-runtime/gstreamer-env.sh /opt/scripts/04-runtime/gstreamer-env.sh
 RUN chmod +x /opt/scripts/04-runtime/gstreamer-env.sh || true
 
 # ----------------------------------------------------------------------------
 # ONNX Runtime build args
 # ----------------------------------------------------------------------------
-# v1.23.2
 ARG ONNXRUNTIME_VERSION=v1.24.1
 ARG ONNXRUNTIME_NATIVE_BUILD_TYPE=Release
 ARG ONNXRUNTIME_WASM_BUILD_TYPE=Release
-
-# GenAI build args
 ARG ONNXRUNTIME_GENAI_VERSION=v0.6.0
 ARG ONNXRUNTIME_GENAI_BUILD_TYPE=Release
 ARG BUILD_GENAI=true
 
 # ------------------------------------------------------------------------------
-# ONNX Runtime build (split into steps for better Docker layer caching)
+# ONNX Runtime — CPU build (steps 10–50 identical to Dockerfile.media)
+# We still build the CPU variant so WASM/JS targets and the cpu pkg-config
+# are available for downstream consumers that don't need GPU inference.
 # ------------------------------------------------------------------------------
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         --mount=type=cache,target=/var/lib/apt \
@@ -142,7 +159,7 @@ RUN set -eux; \
             --build-type "${ONNXRUNTIME_NATIVE_BUILD_TYPE}" \
             --wasm-config "${ONNXRUNTIME_WASM_BUILD_TYPE}"
 
-# pkg-config generator is copied AFTER heavy ONNX build steps to improve caching
+# pkg-config generator (cpu variant)
 COPY linux/scripts/03-media/onnxruntime/runtime /opt/scripts/media/onnxruntime/runtime
 RUN chmod +x /opt/scripts/media/onnxruntime/runtime/*.sh || true
 
@@ -153,8 +170,24 @@ RUN set -eux; \
         --build-type "${ONNXRUNTIME_NATIVE_BUILD_TYPE}" \
         --wasm-config "${ONNXRUNTIME_WASM_BUILD_TYPE}"
 
+# ==============================================================================
+# ONNX Runtime — GPU build (CUDA + TensorRT + cuDNN Execution Providers)
+# Uses the separate 30-build-native-nvidia.sh build script.
+# Output goes to /usr/local/lib/onnxruntime-gpu  (separate from cpu variant)
+# ==============================================================================
+RUN --mount=type=cache,target=/var/cache/ccache \
+        --mount=type=cache,target=/var/cache/sccache \
+        --mount=type=cache,target=/usr/local/cargo/registry \
+        --mount=type=cache,target=/usr/local/cargo/git \
+        set -eux; \
+        export USER=root; \
+        bash /opt/scripts/media/onnxruntime/build/30-build-native-nvidia.sh \
+            --ort-version "${ONNXRUNTIME_VERSION}" \
+            --build-type "${ONNXRUNTIME_NATIVE_BUILD_TYPE}" \
+            --wasm-config "${ONNXRUNTIME_WASM_BUILD_TYPE}"
+
 # ------------------------------------------------------------------------------
-# GStreamer build
+# GStreamer build  (NVIDIA_CODEC_HEADERS=yes is already in ENV above)
 # ------------------------------------------------------------------------------
 COPY linux/scripts/03-media/gstreamer/common /opt/scripts/media/gstreamer/common
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -169,13 +202,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         "$BUILD_TYPE"
 
 # ==============================================================================
-# Media stack; Libcamera only
+# Media stack; Libcamera  (identical to Dockerfile.media)
 # ==============================================================================
 COPY linux/scripts/03-media/libcamera/ /opt/scripts/media/libcamera/
 
-# ------------------------------------------------------------------------------
-# Libcamera build
-# ------------------------------------------------------------------------------
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt \
     --mount=type=cache,target=/root/.cache/uv \
@@ -189,7 +219,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     bash /opt/scripts/media/libcamera/build-libcamera.sh
 
 # ==============================================================================
-# Media stack; FFmpeg (latest from source)
+# Media stack; FFmpeg  (identical to Dockerfile.media)
 # ==============================================================================
 COPY linux/scripts/03-media/ffmpeg/ /opt/scripts/media/ffmpeg/
 RUN chmod +x /opt/scripts/media/ffmpeg/*.sh || true
@@ -199,9 +229,6 @@ ENV PATH="${FFMPEG_PREFIX}/bin:${PATH}"
 ENV PKG_CONFIG_PATH="${FFMPEG_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH}"
 ENV LD_LIBRARY_PATH="${FFMPEG_PREFIX}/lib:${LD_LIBRARY_PATH}"
 
-# ------------------------------------------------------------------------------
-# FFmpeg build
-# ------------------------------------------------------------------------------
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt \
     set -eux; \
@@ -209,7 +236,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     bash /opt/scripts/media/ffmpeg/build-ffmpeg.sh
 
 # ------------------------------------------------------------------------------
-# Cleanup and system configuration
+# Cleanup and system configuration  (identical to Dockerfile.media)
 # ------------------------------------------------------------------------------
 RUN set -eux; \
     apt-get update; \
@@ -236,4 +263,6 @@ RUN set -eux; \
     printf "%s\n" "/opt/libcamera/lib" > /etc/ld.so.conf.d/libcamera.conf; \
     printf "%s\n" "/opt/libcamera/lib64" >> /etc/ld.so.conf.d/libcamera.conf; \
     printf "%s\n" "/opt/ffmpeg/lib" > /etc/ld.so.conf.d/ffmpeg.conf; \
+    printf "%s\n" "${CUDA_HOME}/lib64" > /etc/ld.so.conf.d/cuda.conf; \
+    printf "%s\n" "${TENSORRT_HOME}/lib" > /etc/ld.so.conf.d/tensorrt.conf; \
     ldconfig

@@ -5,6 +5,7 @@ output.log
 archive
 README.md
 docs
+linux/webserver
 out/local-oci
 out/local-android-dir
 out/linux-sdk

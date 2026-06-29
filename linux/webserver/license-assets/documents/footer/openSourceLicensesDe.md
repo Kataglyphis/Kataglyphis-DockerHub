@@ -1,13 +1,14 @@
-# Third-Party Software & Licenses
+# Open-Source-Lizenzen
 
-The container images published by this project bundle several open-source and
-proprietary software components.  This document lists the major components,
-their versions, and their licenses.
+Die Container-Images dieses Projekts enthalten mehrere Open-Source- und
+proprietäre Softwarekomponenten. Diese Seite listet die wichtigsten
+Komponenten, ihre Versionen, Quellen und Lizenzen auf.
 
-The project's own code is licensed under MIT (see OCI labels on the published
-images).  Each upstream component carries its own license terms.
+Der eigene Code des Projekts steht unter der MIT-Lizenz. Für jede
+vorgelagerte Komponente gelten die jeweiligen Lizenzbedingungen.
 
-<!-- generated:deps-table:start -->
+---
+
 
 ## Linux Images (`ghcr.io/kataglyphis/kataglyphis_beschleuniger`)
 
@@ -131,33 +132,11 @@ images).  Each upstream component carries its own license terms.
 | ONNX Runtime DirectML | — | [github.com/microsoft/onnxruntime-directml](https://github.com/microsoft/onnxruntime-directml) | MIT |
 | OpenCV | 5.x | [opencv.org](https://opencv.org/) | Apache 2.0 |
 
-<!-- generated:deps-table:end -->
 
 ---
 
-## License Summary by Category
+## Flutter Web Frontend
 
-| Category | Common Licenses |
-|----------|----------------|
-| Compilers & toolchains | GPLv3+, Apache 2.0, MIT, BSD |
-| Media libraries | LGPLv2+, Apache 2.0, MIT |
-| GPU toolkits | NVIDIA EULA, Apache 2.0, MIT |
-| Android SDK/NDK | Apache 2.0, Google ToS |
-| Runtime languages | MIT, PSF, Apache 2.0 |
-| Windows platform | Microsoft EULA |
-| Build tools | BSD, MIT, Apache 2.0 |
-
----
-
-## Notes
-
-- Ubuntu system packages carry diverse licenses (GPL, LGPL, Apache 2.0, MIT,
-  BSD, zlib, Public Domain).  Check `/usr/share/doc/<pkg>/copyright` inside
-  the image for exact terms.
-- NVIDIA EULAs require acceptance before download/use.  The container images
-  do not redistribute CUDA/cuDNN/TensorRT downloads — they are downloaded
-  during build from official NVIDIA repositories.
-- "git master" versions are built from the latest development branch at the
-  time the image was built.  For exact commit SHAs, inspect the build logs.
-- Version numbers marked with <!-- generated:... --> are automatically kept
-  in sync with `linux/scripts/01-core/versions.env` by `sync_versions.py`.
+Das Web-Frontend verwendet das Flutter SDK und mehrere Dart/Flutter-Pakete.
+Die vollständigen Lizenztexte sind in der Anwendung unter
+`/assets/NOTICES` gebündelt (automatisch vom Flutter-Build generiert).
